@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>cat bounce</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #f7f7f7;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
+      cursor: crosshair;
+    }
+
+    #world {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+    }
+
+    .cat {
+      position: absolute;
+      width: 64px;
+      height: 64px;
+      display: grid;
+      place-items: center;
+      font-size: 44px;
+      line-height: 1;
+      transform-origin: center;
+      will-change: transform;
+      pointer-events: none;
+      filter: drop-shadow(0 6px 10px rgba(0,0,0,.15));
+    }
+
+    .hud {
+      position: fixed;
+      top: 14px;
+      left: 16px;
+      z-index: 10;
+      color: #111;
+      background: rgba(255,255,255,.72);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(0,0,0,.08);
+      border-radius: 14px;
+      padding: 10px 12px;
+      font-size: 14px;
+    }
+
+    .hud kbd {
+      font: inherit;
+      padding: 2px 6px;
+      border-radius: 6px;
+      border: 1px solid rgba(0,0,0,.15);
+      background: rgba(255,255,255,.8);
+    }
+
+    .footer {
+      position: fixed;
+      bottom: 14px;
+      right: 16px;
+      z-index: 10;
+      color: rgba(0,0,0,.45);
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="world"></div>
+  <div class="footer">cats: <span id="count">0</span></div>
+
+  <script>
+    const world = document.getElementById("world");
+    const countEl = document.getElementById("count");
+
+    const CAT_EMOJIS = ["56" ,"ⵥ" ,"massine" ,"꧁" ,"꩜", "ɣ"];
+    const cats = [];
+
+    const GRAVITY = 0.35;
+    const AIR = 0.999;
+    const BOUNCE = 0.82;
+    const WALL_FRICTION = 0.995;
+    const FLOOR_FRICTION = 0.985;
+    const CAT_SIZE = 64;
+    const RADIUS = 26;
+
+    let width = window.innerWidth;
+    let height = window.innerHeight;
+
+    let draggedCat = null;
+    let dragOffsetX = 0;
+    let dragOffsetY = 0;
+    let lastPointerX = 0;
+    let lastPointerY = 0;
+    let pointerVX = 0;
+    let pointerVY = 0;
+
+    function random(min, max) {
+      return Math.random() * (max - min) + min;
+    }
+
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(max, value));
+    }
+
+    function updateCount() {
+      countEl.textContent = cats.length;
+    }
+
+    function createCat(x = width / 2, y = 40) {
+      const el = document.createElement("div");
+      el.className = "cat";
+      el.textContent = CAT_EMOJIS[Math.floor(Math.random() * CAT_EMOJIS.length)];
+      world.appendChild(el);
+
+      const cat = {
+        el,
+        x: x - CAT_SIZE / 2,
+        y: y - CAT_SIZE / 2,
+        vx: random(-4, 4),
+        vy: random(-2, 1),
+        angle: random(-20, 20),
+        spin: random(-0.15, 0.15),
+        size: CAT_SIZE,
+        radius: RADIUS,
+        dragging: false
+      };
+
+      el.style.transform = `translate(${cat.x}px, ${cat.y}px) rotate(${cat.angle}deg)`;
+      cats.push(cat);
+      updateCount();
+      return cat;
+    }
+
+    function removeAllCats() {
+      for (const cat of cats) {
+        cat.el.remove();
+      }
+      cats.length = 0;
+      updateCount();
+    }
+
+    function render(cat) {
+      cat.el.style.transform =
+        `translate(${cat.x}px, ${cat.y}px) rotate(${cat.angle}deg)`;
+    }
+
+    function resolveWalls(cat) {
+      if (cat.x < 0) {
+        cat.x = 0;
+        cat.vx *= -BOUNCE;
+        cat.vy *= WALL_FRICTION;
+        cat.spin *= 0.95;
+      }
+
+      if (cat.x + cat.size > width) {
+        cat.x = width - cat.size;
+        cat.vx *= -BOUNCE;
+        cat.vy *= WALL_FRICTION;
+        cat.spin *= 0.95;
+      }
+
+      if (cat.y < 0) {
+        cat.y = 0;
+        cat.vy *= -BOUNCE;
+      }
+
+      if (cat.y + cat.size > height) {
+        cat.y = height - cat.size;
+        cat.vy *= -BOUNCE;
+        cat.vx *= FLOOR_FRICTION;
+        cat.spin *= 0.97;
+
+        if (Math.abs(cat.vy) < 0.6) {
+          cat.vy = 0;
+        }
+      }
+    }
+
+    function resolveCatCollisions() {
+      for (let i = 0; i < cats.length; i++) {
+        for (let j = i + 1; j < cats.length; j++) {
+          const a = cats[i];
+          const b = cats[j];
+
+          if (a.dragging || b.dragging) continue;
+
+          const ax = a.x + a.size / 2;
+          const ay = a.y + a.size / 2;
+          const bx = b.x + b.size / 2;
+          const by = b.y + b.size / 2;
+
+          let dx = bx - ax;
+          let dy = by - ay;
+          let dist = Math.hypot(dx, dy);
+          const minDist = a.radius + b.radius;
+
+          if (dist === 0) {
+            dx = 0.01;
+            dy = 0.01;
+            dist = Math.hypot(dx, dy);
+          }
+
+          if (dist < minDist) {
+            const nx = dx / dist;
+            const ny = dy / dist;
+            const overlap = minDist - dist;
+
+            a.x -= nx * overlap * 0.5;
+            a.y -= ny * overlap * 0.5;
+            b.x += nx * overlap * 0.5;
+            b.y += ny * overlap * 0.5;
+
+            const rvx = b.vx - a.vx;
+            const rvy = b.vy - a.vy;
+            const speedAlongNormal = rvx * nx + rvy * ny;
+
+            if (speedAlongNormal < 0) {
+              const impulse = -(1 + 0.88) * speedAlongNormal / 2;
+              const ix = impulse * nx;
+              const iy = impulse * ny;
+
+              a.vx -= ix;
+              a.vy -= iy;
+              b.vx += ix;
+              b.vy += iy;
+
+              a.spin -= impulse * 0.02;
+              b.spin += impulse * 0.02;
+            }
+          }
+        }
+      }
+    }
+
+    function animate() {
+      for (const cat of cats) {
+        if (!cat.dragging) {
+          cat.vy += GRAVITY;
+          cat.vx *= AIR;
+          cat.vy *= AIR;
+          cat.x += cat.vx;
+          cat.y += cat.vy;
+          cat.angle += cat.spin * 10;
+          resolveWalls(cat);
+        }
+
+        render(cat);
+      }
+
+      resolveCatCollisions();
+
+      requestAnimationFrame(animate);
+    }
+
+    function getPointerPosition(event) {
+      if (event.touches && event.touches[0]) {
+        return {
+          x: event.touches[0].clientX,
+          y: event.touches[0].clientY
+        };
+      }
+      return {
+        x: event.clientX,
+        y: event.clientY
+      };
+    }
+
+    function findCatAt(x, y) {
+      for (let i = cats.length - 1; i >= 0; i--) {
+        const cat = cats[i];
+        const cx = cat.x + cat.size / 2;
+        const cy = cat.y + cat.size / 2;
+        const d = Math.hypot(x - cx, y - cy);
+
+        if (d <= cat.radius + 8) {
+          return cat;
+        }
+      }
+      return null;
+    }
+
+    function bringToFront(cat) {
+      const index = cats.indexOf(cat);
+      if (index >= 0) {
+        cats.splice(index, 1);
+        cats.push(cat);
+      }
+    }
+
+    function onPointerDown(event) {
+      const { x, y } = getPointerPosition(event);
+      lastPointerX = x;
+      lastPointerY = y;
+      pointerVX = 0;
+      pointerVY = 0;
+
+      const hit = findCatAt(x, y);
+
+      if (hit) {
+        draggedCat = hit;
+        bringToFront(hit);
+        hit.dragging = true;
+        hit.vx = 0;
+        hit.vy = 0;
+        dragOffsetX = x - hit.x;
+        dragOffsetY = y - hit.y;
+      } else {
+        createCat(x, y);
+      }
+    }
+
+    function onPointerMove(event) {
+      const { x, y } = getPointerPosition(event);
+      pointerVX = x - lastPointerX;
+      pointerVY = y - lastPointerY;
+      lastPointerX = x;
+      lastPointerY = y;
+
+      if (!draggedCat) return;
+
+      draggedCat.x = clamp(x - dragOffsetX, 0, width - draggedCat.size);
+      draggedCat.y = clamp(y - dragOffsetY, 0, height - draggedCat.size);
+      draggedCat.angle += pointerVX * 0.4;
+      render(draggedCat);
+    }
+
+    function onPointerUp() {
+      if (!draggedCat) return;
+
+      draggedCat.dragging = false;
+      draggedCat.vx = pointerVX * 0.9;
+      draggedCat.vy = pointerVY * 0.9;
+      draggedCat.spin = clamp(pointerVX * 0.03, -1.2, 1.2);
+      draggedCat = null;
+    }
+
+    function resize() {
+      width = window.innerWidth;
+      height = window.innerHeight;
+
+      for (const cat of cats) {
+        cat.x = clamp(cat.x, 0, width - cat.size);
+        cat.y = clamp(cat.y, 0, height - cat.size);
+        render(cat);
+      }
+    }
+
+    window.addEventListener("resize", resize);
+
+    window.addEventListener("mousedown", onPointerDown);
+    window.addEventListener("mousemove", onPointerMove);
+    window.addEventListener("mouseup", onPointerUp);
+
+    window.addEventListener("touchstart", onPointerDown, { passive: false });
+    window.addEventListener("touchmove", onPointerMove, { passive: false });
+    window.addEventListener("touchend", onPointerUp);
+
+    window.addEventListener("keydown", (event) => {
+      if (event.key.toLowerCase() === "c") {
+        removeAllCats();
+      }
+    });
+
+    // état initial
+    for (let i = 0; i < 8; i++) {
+      createCat(random(80, width - 80), random(20, 160));
+    }
+
+    animate();
+  </script>
+</body>
+</html>
